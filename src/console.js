@@ -1,3 +1,5 @@
+/* eslint no-empty: ["error", { "allowEmptyCatch": true }] */
+
 var wrapMethod = function(console, level, callback) {
   var originalConsoleLevel = console[level];
   var originalConsole = console;
@@ -11,7 +13,7 @@ var wrapMethod = function(console, level, callback) {
   console[level] = function() {
     var args = [].slice.call(arguments);
 
-    var msg = '' + args.join(' ');
+    var msg;
     var data = {level: sentryLevel, logger: 'console', extra: {arguments: args}};
 
     if (level === 'assert') {
@@ -22,6 +24,17 @@ var wrapMethod = function(console, level, callback) {
         callback && callback(msg, data);
       }
     } else {
+      var prettyArgs = [];
+      for (var i = 0; i < args.length; i++) {
+        if (typeof args[i] === 'object') {
+          try {
+            prettyArgs.push(JSON.stringify(args[i]));
+            continue;
+          } catch (e) {}
+        }
+        prettyArgs.push('' + args[i]);
+      }
+      msg = '' + prettyArgs.join(' ');
       callback && callback(msg, data);
     }
 
