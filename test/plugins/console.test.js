@@ -51,6 +51,16 @@ describe('console plugin', function() {
         arguments: ['Raven should capture console.warn']
       }
     });
+
+    Raven.captureMessage.reset();
+
+    console.info('JSON.stringify', 123, undefined, void 0, true, false, NaN, {a: 'A'});
+
+    assert.equal(Raven.captureMessage.callCount, 1);
+    assert.equal(
+      Raven.captureMessage.getCall(0).args[0],
+      'JSON.stringify 123 undefined undefined true false NaN {"a":"A"}'
+    );
   });
 
   describe('console.assert', function() {
