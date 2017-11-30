@@ -1,4 +1,4 @@
-/*! Raven.js 3.20.1 (42adaf5) | github.com/getsentry/raven-js */
+/*! Raven.js 3.20.1 (cccda12) | github.com/getsentry/raven-js */
 
 /*
  * Includes TraceKit
@@ -21,6 +21,8 @@ RavenConfigError.prototype.constructor = RavenConfigError;
 module.exports = RavenConfigError;
 
 },{}],2:[function(_dereq_,module,exports){
+/* eslint no-empty: ["error", { "allowEmptyCatch": true }] */
+
 var wrapMethod = function(console, level, callback) {
   var originalConsoleLevel = console[level];
   var originalConsole = console;
@@ -34,7 +36,7 @@ var wrapMethod = function(console, level, callback) {
   console[level] = function() {
     var args = [].slice.call(arguments);
 
-    var msg = '' + args.join(' ');
+    var msg;
     var data = {level: sentryLevel, logger: 'console', extra: {arguments: args}};
 
     if (level === 'assert') {
@@ -45,6 +47,17 @@ var wrapMethod = function(console, level, callback) {
         callback && callback(msg, data);
       }
     } else {
+      var prettyArgs = [];
+      for (var i = 0; i < args.length; i++) {
+        if (typeof args[i] === 'object') {
+          try {
+            prettyArgs.push(JSON.stringify(args[i]));
+            continue;
+          } catch (e) {}
+        }
+        prettyArgs.push('' + args[i]);
+      }
+      msg = '' + prettyArgs.join(' ');
       callback && callback(msg, data);
     }
 
@@ -146,7 +159,8 @@ function Raven() {
     stackTraceLimit: 50,
     autoBreadcrumbs: true,
     instrument: true,
-    sampleRate: 1
+    sampleRate: 1,
+    preferFetch: false
   };
   this._ignoreOnError = 0;
   this._isRavenInstalled = false;
@@ -1740,28 +1754,16 @@ Raven.prototype = {
     return true;
   },
 
-  _setBackoffState: function(request) {
+  _setBackoffState: function(status, retry) {
     // If we are already in a backoff state, don't change anything
     if (this._shouldBackoff()) {
       return;
     }
 
-    var status = request.status;
-
     // 400 - project_id doesn't exist or some other fatal
     // 401 - invalid/revoked dsn
     // 429 - too many requests
     if (!(status === 400 || status === 401 || status === 429)) return;
-
-    var retry;
-    try {
-      // If Retry-After is not in Access-Control-Expose-Headers, most
-      // browsers will throw an exception trying to access it
-      retry = request.getResponseHeader('Retry-After');
-      retry = parseInt(retry, 10) * 1000; // Retry-After is returned in seconds
-    } catch (e) {
-      /* eslint no-empty:0 */
-    }
 
     this._backoffDuration = retry
       ? // If Sentry server returned a Retry-After value, use it
@@ -1932,8 +1934,25 @@ Raven.prototype = {
       onError: function failure(error) {
         self._logDebug('error', 'Raven transport failed to send: ', error);
 
-        if (error.request) {
-          self._setBackoffState(error.request);
+        if (error.xhrRequest || error.fetchResponse) {
+          var retry;
+          var status;
+          if (error.xhrRequest) {
+            status = error.xhrRequest.status;
+            try {
+              // If Retry-After is not in Access-Control-Expose-Headers, most
+              // browsers will throw an exception trying to access it
+              retry = error.xhrRequest.getResponseHeader('Retry-After');
+            } catch (e) {
+              /* eslint no-empty:0 */
+            }
+          } else if (error.fetchResponse) {
+            status = error.fetchResponse.status;
+            if (error.fetchResponse.headers.has('Retry-After')) {
+              retry = error.fetchResponse.headers.get('Retry-After');
+            }
+          }
+          self._setBackoffState(status, retry && parseInt(retry, 10) * 1000);
         }
 
         self._triggerEvent('failure', {
@@ -1947,9 +1966,36 @@ Raven.prototype = {
   },
 
   _makeRequest: function(opts) {
+    var hasFetch = !!(_window.fetch && _window.Request);
+    if (this._globalOptions.preferFetch && hasFetch) {
+      return this._doFetch(opts);
+    }
     var request = _window.XMLHttpRequest && new _window.XMLHttpRequest();
-    if (!request) return;
+    if (request) {
+      return this._doXHR(request, opts);
+    } else if (hasFetch) {
+      return this._doFetch(opts);
+    }
+  },
 
+  _doFetch: function(opts) {
+    _window
+      .fetch(opts.url + '?' + urlencode(opts.auth), {
+        method: 'POST',
+        body: stringify(opts.data)
+      })
+      .then(function(resp) {
+        if (resp.ok) {
+          opts.onSuccess && opts.onSuccess();
+        } else if (opts.onError) {
+          var err = new Error('Sentry error code: ' + resp.status);
+          err.fetchResponse = resp;
+          opts.onError(err);
+        }
+      }, opts.onError);
+  },
+
+  _doXHR: function(request, opts) {
     // if browser doesn't support CORS (e.g. IE7), we are out of luck
     var hasCORS = 'withCredentials' in request || typeof XDomainRequest !== 'undefined';
 
@@ -1965,7 +2011,7 @@ Raven.prototype = {
           opts.onSuccess && opts.onSuccess();
         } else if (opts.onError) {
           var err = new Error('Sentry error code: ' + request.status);
-          err.request = request;
+          err.xhrRequest = request;
           opts.onError(err);
         }
       };
@@ -1982,7 +2028,7 @@ Raven.prototype = {
       if (opts.onError) {
         request.onerror = function() {
           var err = new Error('Sentry error code: XDomainRequest');
-          err.request = request;
+          err.xhrRequest = request;
           opts.onError(err);
         };
       }
