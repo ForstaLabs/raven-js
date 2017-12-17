@@ -1,4 +1,4 @@
-/*! Raven.js 3.21.0 (fbfea0f) | github.com/getsentry/raven-js */
+/*! Raven.js 3.21.0 (e74fc89) | github.com/getsentry/raven-js */
 
 /*
  * Includes TraceKit
@@ -45,6 +45,8 @@ function consolePlugin(Raven, console, pluginOptions) {
 module.exports = consolePlugin;
 
 },{"2":2}],2:[function(_dereq_,module,exports){
+/* eslint no-empty: ["error", { "allowEmptyCatch": true }] */
+
 var wrapMethod = function(console, level, callback) {
   var originalConsoleLevel = console[level];
   var originalConsole = console;
@@ -58,7 +60,7 @@ var wrapMethod = function(console, level, callback) {
   console[level] = function() {
     var args = [].slice.call(arguments);
 
-    var msg = '' + args.join(' ');
+    var msg;
     var data = {level: sentryLevel, logger: 'console', extra: {arguments: args}};
 
     if (level === 'assert') {
@@ -69,6 +71,17 @@ var wrapMethod = function(console, level, callback) {
         callback && callback(msg, data);
       }
     } else {
+      var prettyArgs = [];
+      for (var i = 0; i < args.length; i++) {
+        if (typeof args[i] === 'object') {
+          try {
+            prettyArgs.push(JSON.stringify(args[i]));
+            continue;
+          } catch (e) {}
+        }
+        prettyArgs.push('' + args[i]);
+      }
+      msg = '' + prettyArgs.join(' ');
       callback && callback(msg, data);
     }
 
